@@ -257,12 +257,12 @@ def train(config: DictConfig, signal_handler: SignalHandler):
         )
 
     # Eval first for debugging
-    if config.eval.run_eval_first and start_epoch == 0:
+    if config.eval.run_eval_first:
         eval_dict, eval_images, eval_point_clouds = eval(
             model.model(), datamodule, config, eval_loss_fn
         )
         for k, v in eval_dict.items():
-            logger.info(f"First Eval: {k}: {v:.4f}")
+            logger.info(f"First Eval: {k}: {v:.8f}")
 
     for ep in range(start_epoch, config.train.num_epochs):
         model.train()
