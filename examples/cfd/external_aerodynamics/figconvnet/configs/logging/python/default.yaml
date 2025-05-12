@@ -26,7 +26,6 @@ rank0_only: true
 formatters:
   default:
     format: "[%(asctime)s - %(name)s - %(levelname)s] %(message)s"
-    datefmt: "%H:%M:%S"
 
 handlers:
   console:

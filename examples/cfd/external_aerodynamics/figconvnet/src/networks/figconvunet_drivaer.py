@@ -128,6 +128,13 @@ class FIGConvUNetDrivAerNet(FIGConvUNet):
         pred = datamodule.decode(normalized_pred.clone())
         gt = data_dict["time_avg_pressure"].to(self.device).view_as(pred)
         out_dict["l2_decoded"] = loss_fn(pred, gt)
+        
+        # Calculate relative errors for normalized pressure
+        rel_l2 = torch.linalg.vector_norm(normalized_pred - normalized_gt) / torch.linalg.vector_norm(normalized_gt)
+        rel_l1 = torch.sum(torch.abs(normalized_pred - normalized_gt)) / torch.sum(torch.abs(normalized_gt))
+        out_dict["norm_pressure_rel_l2"] = rel_l2.item()
+        out_dict["norm_pressure_rel_l1"] = rel_l1.item()
+        
         # Pressure evaluation
         out_dict.update(
             eval_all_metrics(normalized_gt, normalized_pred, prefix="norm_pressure")
