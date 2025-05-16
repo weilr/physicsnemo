@@ -141,7 +141,7 @@ def eval(model, datamodule, config, loss_fn=None):
                 if isinstance(v, torch.Tensor):
                     v = v.item()
                 if isinstance(v, float):
-                    print_str += f"{k}: {v:.4f}, "
+                    print_str += f"{k}: {v:.8f}, "
                 else:
                     print_str += f"{k}: {v}, "
             logger.info(print_str)
@@ -318,9 +318,9 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             for k, v in loss_dict.items():
                 loggers.log_scalar(f"train/{k}", v.item(), tot_iter)
             if tot_iter % config.train.print_interval == 0:
-                print_str = f"Iter {tot_iter} loss: {loss.item():.4f}, "
+                print_str = f"Iter {tot_iter} loss: {loss.item():.8f}, "
                 for k, v in loss_dict.items():
-                    print_str += f"{k}: {v.item():.4f}, "  # only print the number
+                    print_str += f"{k}: {v.item():.8f}, "  # only print the number
                 logger.info(print_str)
 
             if config.train.lr_scheduler_mode == "iteration":
@@ -328,6 +328,7 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             tot_iter += 1
             torch.cuda.empty_cache()
 
+        
         if config.train.lr_scheduler_mode == "epoch":
             scheduler.step()
         t2 = default_timer()
@@ -346,7 +347,7 @@ def train(config: DictConfig, signal_handler: SignalHandler):
                 model.model(), datamodule, config, eval_loss_fn
             )
             for k, v in eval_dict.items():
-                logger.info(f"Epoch: {ep} {k}: {v:.4f}")
+                logger.info(f"Epoch: {ep} {k}: {v:.8f}")
                 loggers.log_scalar(f"eval/{k}", v, tot_iter)
             for k, v in eval_images.items():
                 loggers.log_image(f"eval_vis/{k}", v, tot_iter)

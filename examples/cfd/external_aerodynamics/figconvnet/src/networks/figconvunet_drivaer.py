@@ -130,10 +130,10 @@ class FIGConvUNetDrivAerNet(FIGConvUNet):
         out_dict["l2_decoded"] = loss_fn(pred, gt)
         
         # Calculate relative errors for normalized pressure
-        rel_l2 = torch.linalg.vector_norm(normalized_pred - normalized_gt) / torch.linalg.vector_norm(normalized_gt)
-        rel_l1 = torch.sum(torch.abs(normalized_pred - normalized_gt)) / torch.sum(torch.abs(normalized_gt))
-        out_dict["norm_pressure_rel_l2"] = rel_l2.item()
-        out_dict["norm_pressure_rel_l1"] = rel_l1.item()
+        rel_l2 = torch.linalg.vector_norm(pred - gt) / torch.linalg.vector_norm(gt)
+        rel_l1 = torch.sum(torch.abs(pred - gt)) / torch.sum(torch.abs(gt))
+        out_dict["pressure_rel_l2"] = rel_l2.item()
+        out_dict["pressure_rel_l1"] = rel_l1.item()
         
         # Pressure evaluation
         out_dict.update(
@@ -392,10 +392,10 @@ class FIGConvUNetDrivAerML(FIGConvUNet):
 def drivaer_create_subplot(ax, vertices, data, title):
     # Flip along x axis
     vertices = vertices.clone()
-    vertices[:, 0] = -vertices[:, 0]
+    vertices[:, :, 0] = -vertices[:, :, 0]
 
     sc = ax.scatter(
-        vertices[:, 0], vertices[:, 1], vertices[:, 2], c=data, cmap="viridis"
+        vertices[:, :, 0], vertices[:, :, 1], vertices[:, :, 2], c=data, cmap="viridis"
     )
     # Make the colorbar smaller
     # fig.colorbar(sc, ax=ax, shrink=0.25, aspect=5)

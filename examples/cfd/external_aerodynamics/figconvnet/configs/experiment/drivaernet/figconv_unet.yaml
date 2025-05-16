@@ -55,6 +55,6 @@ loggers:
     entity: physicsnemo
     project_name: car-cfd
     group_name: fignet
-    run_name: FIGConvNet-level2-16,16,16-res250-150-100-pool-max-2-aabb-275x15x1-ks5-np32768-b8x2
-
+    # run_name: FIGConvNet-level2-16,16,16-res250-150-100-pool-max-2-aabb-275x15x1-ks5-np32768-b8x2
+    run_name: FIGConvNet-${now:%Y%m%d_%H%M%S}-level${model.num_levels}-${model.hidden_channels}-pool-${model.pooling_type}-${model.pooling_layers.0}-aabb-${model.aabb_max[0]}x${model.aabb_max[1]}x${model.aabb_max[2]}-ks${model.kernel_size}-np${data.num_points}-b${train.batch_size}-res${model.resolution_memory_format_pairs}
 seed: 0
