@@ -119,7 +119,37 @@ def _resume_from_checkpoint(model, optimizer, scheduler, scaler, config):
 
 
 @torch.no_grad()
-def eval(model, datamodule, config, loss_fn=None):
+def val_model(model, datamodule, config, loss_fn=None):
+    model.eval()
+    val_loader = datamodule.val_dataloader(
+        batch_size=config.train.batch_size, **config.train.dataloader
+    )
+
+    val_loss_meter = AverageMeter()
+    for i, data_dict in enumerate(val_loader):
+        with autocast():
+            loss_dict = model.model().loss_dict(
+                data_dict, loss_fn=loss_fn, datamodule=datamodule
+            )
+
+        loss = 0
+        for k, v in loss_dict.items():
+            v = v * getattr(config, k + "_weight", 1)
+            loss = loss + v.mean()
+        val_loss_meter.update(loss.item())
+
+        if i % config.train.print_interval == 0:
+            print_str = f"[Validation]Iter {tot_iter} loss: {loss.item():.8f}, "
+            for k, v in loss_dict.items():
+                print_str += f"{k}: {v.item():.8f}, "  # only print the number
+            logger.info(print_str)
+        
+    model.train()
+    return val_loss_meter.avg
+
+
+@torch.no_grad()
+def test_model(model, datamodule, config, loss_fn=None):
     model.eval()
     test_loader = datamodule.test_dataloader(
         batch_size=config.eval.batch_size, **config.eval.dataloader
@@ -136,7 +166,7 @@ def eval(model, datamodule, config, loss_fn=None):
             visualize_data_dicts.append(data_dict)
         if i % config.eval.print_interval == 0:
             # Print eval dict
-            print_str = f"Eval {i}: "
+            print_str = f"[test]Eval {i}: "
             for k, v in eval_meter.avg.items():
                 if isinstance(v, torch.Tensor):
                     v = v.item()
@@ -318,7 +348,7 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             for k, v in loss_dict.items():
                 loggers.log_scalar(f"train/{k}", v.item(), tot_iter)
             if tot_iter % config.train.print_interval == 0:
-                print_str = f"Iter {tot_iter} loss: {loss.item():.8f}, "
+                print_str = f"[Train]Iter {tot_iter} loss: {loss.item():.8f}, "
                 for k, v in loss_dict.items():
                     print_str += f"{k}: {v.item():.8f}, "  # only print the number
                 logger.info(print_str)
@@ -328,9 +358,14 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             tot_iter += 1
             torch.cuda.empty_cache()
 
+        # Validation
+        val_loss = val_model(model.model(), datamodule, config, loss_fn=loss_fn)
+        logger.info(f"Epoch {ep} Validation Loss: {val_loss:.6f}")
+        loggers.log_scalar("val/loss", val_loss, tot_iter)
         
         if config.train.lr_scheduler_mode == "epoch":
-            scheduler.step()
+            scheduler.step(val_loss) if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau) else scheduler.step()
+
         t2 = default_timer()
         logger.info(
             f"Training epoch {ep} took {t2 - t1:.2f} seconds. L2 loss: {train_l2_meter.avg:.4f}"
@@ -343,7 +378,7 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             or ep == config.train.num_epochs - 1
             and (not signal_handler.is_stopped())
         ):
-            eval_dict, eval_images, eval_point_clouds = eval(
+            eval_dict, eval_images, eval_point_clouds = test_model(
                 model.model(), datamodule, config, eval_loss_fn
             )
             for k, v in eval_dict.items():
