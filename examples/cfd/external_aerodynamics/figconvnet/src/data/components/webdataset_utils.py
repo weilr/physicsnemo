@@ -23,8 +23,33 @@ import numpy as np
 import torch
 import webdataset as wds
 
-
 def split_by_node_equal(
+    src,
+    drop_last: bool = False,
+    group=None,             # torch.distributed.ProcessGroup
+):
+    """
+    按 global_worker 维度平均切分 iterable，使
+    - 不同 rank 之间 不重复
+    - 同一 rank 内的 DataLoader-worker 之间 也不重复
+    """
+    rank, world_size, worker, num_workers = wds.utils.pytorch_worker_info(group=group)
+
+    # global_worker_id & global_world_size
+    g_worker = rank * num_workers + worker
+    g_world  = world_size * num_workers
+
+    it = iter(src)
+    while True:
+        chunk = list(itertools.islice(it, g_world))
+        if len(chunk) < g_world:
+            # 尾巴不足一个整批
+            if not drop_last and len(chunk) > 0:
+                yield chunk[g_worker % len(chunk)]
+            break
+        yield chunk[g_worker]
+
+def split_by_node_equal_old(
     src: Iterable,
     drop_last: bool = False,
     group: "torch.distributed.ProcessGroup" = None,

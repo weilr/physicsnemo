@@ -37,6 +37,11 @@ train:
     num_workers: 0
     pin_memory: true
   lr_scheduler_mode: epoch # epoch or iteration.
+  early_stopping:
+    enabled: true
+    patience: 40  # Number of epochs to wait before stopping
+    verbose: true  # Whether to print messages
+    delta: 0.001  # Minimum change in validation loss to qualify as an improvement
 
 eval:
   loss: null

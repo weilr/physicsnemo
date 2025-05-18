@@ -18,7 +18,9 @@ from functools import partial
 import logging
 import logging.config
 import os
+import re
 from timeit import default_timer
+import webdataset as wds
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -40,6 +42,7 @@ from src.utils.average_meter import AverageMeter, AverageMeterDict, Timer
 from src.utils.loggers import init_logger
 from src.utils.seed import set_seed
 from src.utils.signal_handlers import SignalHandler
+from src.utils.early_stopping import EarlyStopping
 from physicsnemo.models.figconvnet.geometries import GridFeaturesMemoryFormat
 
 
@@ -49,7 +52,7 @@ logger = logging.getLogger("figconv")
 def _delete_previous_checkpoints(config):
     checkpoints_to_delete = []
     for f in os.listdir(config.output):
-        if f.startswith("model_") and f.endswith(".pth"):
+        if re.compile(r"^model_(\d{5})\.pth$").match(f):
             checkpoints_to_delete.append(f)
     checkpoints_to_delete.sort()
     checkpoints_to_delete = checkpoints_to_delete[: -config.train.num_checkpoints]
@@ -62,8 +65,8 @@ def _delete_previous_checkpoints(config):
 
 
 @rank0
-def _save_state(model, optimizer, scheduler, scaler, epoch, tot_iter, config):
-    save_path = os.path.join(config.output, f"model_{epoch:05d}.pth")
+def _save_state(model, optimizer, scheduler, scaler, epoch, tot_iter, config, file_name=None):
+    save_path = os.path.join(config.output, f"model_{epoch:05d}.pth" if file_name is None else file_name)
     logger.info(f"Saving model at epoch {epoch} to {save_path}")
     state_dict = {
         "model": model.model().state_dict(),
@@ -119,7 +122,7 @@ def _resume_from_checkpoint(model, optimizer, scheduler, scaler, config):
 
 
 @torch.no_grad()
-def val_model(model, datamodule, config, loss_fn=None):
+def val_model(model, datamodule, config, autocast, loss_fn=None):
     model.eval()
     val_loader = datamodule.val_dataloader(
         batch_size=config.train.batch_size, **config.train.dataloader
@@ -128,7 +131,7 @@ def val_model(model, datamodule, config, loss_fn=None):
     val_loss_meter = AverageMeter()
     for i, data_dict in enumerate(val_loader):
         with autocast():
-            loss_dict = model.model().loss_dict(
+            loss_dict = model.loss_dict(
                 data_dict, loss_fn=loss_fn, datamodule=datamodule
             )
 
@@ -139,7 +142,7 @@ def val_model(model, datamodule, config, loss_fn=None):
         val_loss_meter.update(loss.item())
 
         if i % config.train.print_interval == 0:
-            print_str = f"[Validation]Iter {tot_iter} loss: {loss.item():.8f}, "
+            print_str = f"[Validation] Iter {i} loss: {loss.item():.8f}, "
             for k, v in loss_dict.items():
                 print_str += f"{k}: {v.item():.8f}, "  # only print the number
             logger.info(print_str)
@@ -166,7 +169,7 @@ def test_model(model, datamodule, config, loss_fn=None):
             visualize_data_dicts.append(data_dict)
         if i % config.eval.print_interval == 0:
             # Print eval dict
-            print_str = f"[test]Eval {i}: "
+            print_str = f"[Test] Eval {i}: "
             for k, v in eval_meter.avg.items():
                 if isinstance(v, torch.Tensor):
                     v = v.item()
@@ -294,6 +297,16 @@ def train(config: DictConfig, signal_handler: SignalHandler):
         for k, v in eval_dict.items():
             logger.info(f"First Eval: {k}: {v:.8f}")
 
+    # Initialize EarlyStopping if enabled
+    if config.train.early_stopping.enabled and dist.rank == 0:
+        early_stopping = EarlyStopping(
+            patience=config.train.early_stopping.patience,
+            delta=config.train.early_stopping.delta,
+            verbose=config.train.early_stopping.verbose,
+            save_state_fn=_save_state,
+            logger=logger,
+        )
+
     for ep in range(start_epoch, config.train.num_epochs):
         model.train()
         t1 = default_timer()
@@ -348,7 +361,7 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             for k, v in loss_dict.items():
                 loggers.log_scalar(f"train/{k}", v.item(), tot_iter)
             if tot_iter % config.train.print_interval == 0:
-                print_str = f"[Train]Iter {tot_iter} loss: {loss.item():.8f}, "
+                print_str = f"[Train] Iter {tot_iter} loss: {loss.item():.8f}, "
                 for k, v in loss_dict.items():
                     print_str += f"{k}: {v.item():.8f}, "  # only print the number
                 logger.info(print_str)
@@ -358,20 +371,27 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             tot_iter += 1
             torch.cuda.empty_cache()
 
-        # Validation
-        val_loss = val_model(model.model(), datamodule, config, loss_fn=loss_fn)
-        logger.info(f"Epoch {ep} Validation Loss: {val_loss:.6f}")
-        loggers.log_scalar("val/loss", val_loss, tot_iter)
-        
-        if config.train.lr_scheduler_mode == "epoch":
-            scheduler.step(val_loss) if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau) else scheduler.step()
-
         t2 = default_timer()
         logger.info(
-            f"Training epoch {ep} took {t2 - t1:.2f} seconds. L2 loss: {train_l2_meter.avg:.4f}"
+            f"Training epoch {ep} took {t2 - t1:.2f} seconds. L2 loss: {train_l2_meter.avg:.8f}"
         )
         loggers.log_scalar("train/epoch_train_l2", train_l2_meter.avg, tot_iter)
         loggers.log_scalar("train/train_epoch_duration", t2 - t1, tot_iter)
+        
+        # Validation
+        t1 = default_timer()
+        val_loss = val_model(model.model(), datamodule, config, autocast, loss_fn=loss_fn)
+        t2 = default_timer()
+        logger.info(f"Validation epoch {ep} took {t2 - t1:.2f} seconds. Validation Loss: {val_loss:.8f}")
+        loggers.log_scalar("val/loss", val_loss, tot_iter)
+        
+        if config.train.lr_scheduler_mode == "epoch":
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                val_loss_tensor = torch.tensor(val_loss, device="cuda")
+                torch.distributed.all_reduce(val_loss_tensor, op=torch.distributed.ReduceOp.AVG)
+                scheduler.step(val_loss_tensor.item())
+            else:
+                scheduler.step()
 
         if (
             ep % config.eval.interval == 0
@@ -382,7 +402,7 @@ def train(config: DictConfig, signal_handler: SignalHandler):
                 model.model(), datamodule, config, eval_loss_fn
             )
             for k, v in eval_dict.items():
-                logger.info(f"Epoch: {ep} {k}: {v:.8f}")
+                logger.info(f"[Test] Epoch: {ep} {k}: {v:.8f}")
                 loggers.log_scalar(f"eval/{k}", v, tot_iter)
             for k, v in eval_images.items():
                 loggers.log_image(f"eval_vis/{k}", v, tot_iter)
@@ -397,8 +417,19 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             # save the model
             _save_state(model, optimizer, scheduler, scaler, ep, tot_iter, config)
 
+        stop_flag = torch.tensor(False, dtype=torch.bool, device="cuda") 
+        # EarlyStopping
+        if config.train.early_stopping.enabled and dist.rank == 0:
+            early_stopping(val_loss, model, optimizer=optimizer, scheduler=scheduler, scaler=scaler, epoch=ep, 
+                tot_iter=tot_iter, config=config, file_name=f"best_model.pth")
+            if early_stopping.early_stop:
+                logger.info(f"Early stopping triggered in epoch {ep}, exiting training loop...")
+                stop_flag.fill_(True)
+        if dist.distributed:
+            torch.distributed.broadcast(stop_flag, src=0)
+
         # Exit the training loop if the signal handler is stopped.
-        if signal_handler.is_stopped():
+        if signal_handler.is_stopped() or stop_flag.item():
             break
 
     # Save the final model if the training loop was not stopped by the signal handler.
