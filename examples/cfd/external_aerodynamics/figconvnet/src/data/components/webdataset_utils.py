@@ -35,19 +35,27 @@ def split_by_node_equal(
     """
     rank, world_size, worker, num_workers = wds.utils.pytorch_worker_info(group=group)
 
-    # global_worker_id & global_world_size
+    worker = 0 if worker is None else worker
+    num_workers  = max(1, num_workers)
     g_worker = rank * num_workers + worker
     g_world  = world_size * num_workers
 
     it = iter(src)
     while True:
         chunk = list(itertools.islice(it, g_world))
-        if len(chunk) < g_world:
-            # 尾巴不足一个整批
-            if not drop_last and len(chunk) > 0:
-                yield chunk[g_worker % len(chunk)]
-            break
-        yield chunk[g_worker]
+        n = len(chunk)
+
+        if n == 0:
+            break                      # 数据读完
+
+        if n < g_world:                # 剩余尾巴
+            if drop_last:
+                break
+            if g_worker < n:
+                yield chunk[g_worker]
+            break                      # 所有尾巴处理完，结束
+        else:
+            yield chunk[g_worker]
 
 def split_by_node_equal_old(
     src: Iterable,

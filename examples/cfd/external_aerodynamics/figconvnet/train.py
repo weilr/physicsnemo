@@ -307,6 +307,7 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             logger=logger,
         )
 
+    end_epoch = config.train.num_epochs-1
     for ep in range(start_epoch, config.train.num_epochs):
         model.train()
         t1 = default_timer()
@@ -377,6 +378,7 @@ def train(config: DictConfig, signal_handler: SignalHandler):
         )
         loggers.log_scalar("train/epoch_train_l2", train_l2_meter.avg, tot_iter)
         loggers.log_scalar("train/train_epoch_duration", t2 - t1, tot_iter)
+        loggers.log_scalar("train/epoch", ep, tot_iter)
         
         # Validation
         t1 = default_timer()
@@ -393,8 +395,21 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             else:
                 scheduler.step()
 
+        # Save the weights, optimization state, and scheduler state into one file
+        if ep % config.train.save_interval == 0 or signal_handler.is_stopped():
+            # save the model
+            _save_state(model, optimizer, scheduler, scaler, ep, tot_iter, config)
+        # EarlyStopping
+        if config.train.early_stopping.enabled and dist.rank == 0:
+            early_stopping(val_loss, model, optimizer=optimizer, scheduler=scheduler, scaler=scaler, epoch=ep, 
+                tot_iter=tot_iter, config=config, file_name=f"best_model.pth")
+            if early_stopping.early_stop:
+                logger.info(f"Early stopping triggered in epoch {ep}, exiting training loop...")
+                signal_handler.stop()
+        # Eval
         if (
-            ep % config.eval.interval == 0
+            signal_handler.is_stopped() 
+            or ep % config.eval.interval == 0
             or ep == config.train.num_epochs - 1
             and (not signal_handler.is_stopped())
         ):
@@ -411,25 +426,9 @@ def train(config: DictConfig, signal_handler: SignalHandler):
                     loggers.log_pointcloud(
                         f"eval_vis/{k}", v[..., :3], v[..., 3:], tot_iter
                     )
-
-        # Save the weights, optimization state, and scheduler state into one file
-        if ep % config.train.save_interval == 0 or signal_handler.is_stopped():
-            # save the model
-            _save_state(model, optimizer, scheduler, scaler, ep, tot_iter, config)
-
-        stop_flag = torch.tensor(False, dtype=torch.bool, device="cuda") 
-        # EarlyStopping
-        if config.train.early_stopping.enabled and dist.rank == 0:
-            early_stopping(val_loss, model, optimizer=optimizer, scheduler=scheduler, scaler=scaler, epoch=ep, 
-                tot_iter=tot_iter, config=config, file_name=f"best_model.pth")
-            if early_stopping.early_stop:
-                logger.info(f"Early stopping triggered in epoch {ep}, exiting training loop...")
-                stop_flag.fill_(True)
-        if dist.distributed:
-            torch.distributed.broadcast(stop_flag, src=0)
-
+        end_epoch = ep
         # Exit the training loop if the signal handler is stopped.
-        if signal_handler.is_stopped() or stop_flag.item():
+        if signal_handler.is_stopped():
             break
 
     # Save the final model if the training loop was not stopped by the signal handler.
@@ -439,7 +438,7 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             optimizer,
             scheduler,
             scaler,
-            config.train.num_epochs - 1,
+            end_epoch,
             tot_iter,
             config,
         )
