@@ -80,6 +80,23 @@ def _save_state(model, optimizer, scheduler, scaler, epoch, tot_iter, config, fi
     torch.save(state_dict, save_path)
     _delete_previous_checkpoints(config)
 
+def _load_model_state(model, checkpoint_path):
+    # Get rank if distributed
+    rank = 0
+    if torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+    map_location = {"cuda:0": f"cuda:{rank}"}
+    checkpoint = torch.load(checkpoint_path, map_location=map_location)
+    
+    model.model().load_state_dict(checkpoint["model"])
+    start_epoch = checkpoint["epoch"] + 1
+    tot_iter = checkpoint["tot_iter"]
+    
+    # Wait until all processes load the checkpoint
+    if DistributedManager().distributed:
+        torch.distributed.barrier()
+
+    return start_epoch, tot_iter
 
 def _resume_from_checkpoint(model, optimizer, scheduler, scaler, config):
     logger.info(f"Resuming from {config.output}")
@@ -289,9 +306,26 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             model, optimizer, scheduler, scaler, config
         )
 
+    if config.test_best_only:
+        best_model_path = os.path.join(config.output, "best_model.pth")
+        if os.path.exists(best_model_path):
+            logger.info(f"Loading best model: {best_model_path}")
+            best_epoch, best_iter = _load_model_state(model, best_model_path)
+        else:
+            logger.info("No best model found")
+            return
+        
+        # Run final evaluation
+        eval_dict, eval_images, eval_point_clouds = test_model(
+            model.model(), datamodule, config, eval_loss_fn
+        )
+        for k, v in eval_dict.items():
+            logger.info(f"[Final Test with Best Model] Epoch: {best_epoch} Iter: {best_iter} {k}: {v:.8f}")
+        return
+
     # Eval first for debugging
     if config.eval.run_eval_first:
-        eval_dict, eval_images, eval_point_clouds = eval(
+        eval_dict, eval_images, eval_point_clouds = test_model(
             model.model(), datamodule, config, eval_loss_fn
         )
         for k, v in eval_dict.items():
@@ -391,7 +425,12 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                 val_loss_tensor = torch.tensor(val_loss, device="cuda")
                 torch.distributed.all_reduce(val_loss_tensor, op=torch.distributed.ReduceOp.AVG)
+                
+                old_lr = optimizer.param_groups[0]['lr']
                 scheduler.step(val_loss_tensor.item())
+                new_lr = optimizer.param_groups[0]['lr']
+                if new_lr != old_lr:
+                    logger.info(f'Learning rate decreased from {old_lr:.6f} to {new_lr:.6f}')
             else:
                 scheduler.step()
 
@@ -406,10 +445,27 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             if early_stopping.early_stop:
                 logger.info(f"Early stopping triggered in epoch {ep}, exiting training loop...")
                 signal_handler.stop()
-        # Eval
+                
+        # Make sure all processes check is_stopped() to sync the stop signal
+        if signal_handler.is_stopped():
+            logger.info(f"Process {dist.rank} received stop signal")
+            # Load best model before final evaluation
+            best_model_path = os.path.join(config.output, "best_model.pth")
+            if os.path.exists(best_model_path):
+                logger.info("Loading best model for final evaluation")
+                best_epoch, best_iter = _load_model_state(model, best_model_path)
+            
+            # Run final evaluation
+            eval_dict, eval_images, eval_point_clouds = test_model(
+                model.model(), datamodule, config, eval_loss_fn
+            )
+            for k, v in eval_dict.items():
+                logger.info(f"[Final Test with Best Model] Epoch: {best_epoch} Iter: {best_iter} {k}: {v:.8f}")
+            break
+                
+        # Regular evaluation
         if (
-            signal_handler.is_stopped() 
-            or ep % config.eval.interval == 0
+            ep % config.eval.interval == 0
             or ep == config.train.num_epochs - 1
             and (not signal_handler.is_stopped())
         ):
@@ -427,9 +483,6 @@ def train(config: DictConfig, signal_handler: SignalHandler):
                         f"eval_vis/{k}", v[..., :3], v[..., 3:], tot_iter
                     )
         end_epoch = ep
-        # Exit the training loop if the signal handler is stopped.
-        if signal_handler.is_stopped():
-            break
 
     # Save the final model if the training loop was not stopped by the signal handler.
     if not signal_handler.is_stopped():
