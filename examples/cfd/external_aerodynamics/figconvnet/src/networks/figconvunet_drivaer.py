@@ -32,7 +32,7 @@ from physicsnemo.models.figconvnet.geometries import (
 from physicsnemo.models.figconvnet.components.reductions import REDUCTION_TYPES
 
 from src.utils.visualization import fig_to_numpy
-from src.utils.eval_funcs import eval_all_metrics
+from src.utils.eval_funcs import eval_all_metrics, relative_l1_error, relative_l2_error
 
 
 class FIGConvUNetDrivAerNet(FIGConvUNet):
@@ -130,10 +130,8 @@ class FIGConvUNetDrivAerNet(FIGConvUNet):
         out_dict["l2_decoded"] = loss_fn(pred, gt)
         
         # Calculate relative errors for normalized pressure
-        rel_l2 = torch.linalg.vector_norm(pred - gt) / torch.linalg.vector_norm(gt)
-        rel_l1 = torch.sum(torch.abs(pred - gt)) / torch.sum(torch.abs(gt))
-        out_dict["pressure_rel_l2"] = rel_l2.item()
-        out_dict["pressure_rel_l1"] = rel_l1.item()
+        out_dict["pressure_rel_l2"] = relative_l2_error(gt, pred).item()
+        out_dict["pressure_rel_l1"] = relative_l1_error(gt, pred).item()
         
         # Pressure evaluation
         out_dict.update(
@@ -190,6 +188,48 @@ class FIGConvUNetDrivAerNet(FIGConvUNet):
         # if drag weight is in self attribute
         if hasattr(self, "drag_weight"):
             return_dict["drag_loss"] *= self.drag_weight
+
+        return return_dict
+    
+    def val_dict(self, data_dict, config, loss_fn=None, datamodule=None, **kwargs) -> Dict:
+        vertices = self.data_dict_to_input(data_dict)
+        normalized_pred, drag_pred = self(vertices)
+        normalized_gt = data_dict["time_avg_pressure_whitened"].to(self.device)
+
+        return_dict = {}
+        if loss_fn is None:
+            loss_fn = self.loss
+
+        return_dict["pressure_loss"] = loss_fn(
+            normalized_pred.view(1, -1), normalized_gt.view(1, -1).to(self.device)
+        )
+
+        # compute drag loss
+        drag_loss_fn = loss_fn
+        # if drag_loss_fn is in self attribute
+        if hasattr(self, "drag_loss_fn"):
+            drag_loss_fn = self.drag_loss_fn
+
+        gt_drag = data_dict["c_d"].float().to(self.device)
+        return_dict["drag_loss"] = drag_loss_fn(drag_pred, gt_drag.view_as(drag_pred))
+
+        # if drag weight is in self attribute
+        if hasattr(self, "drag_weight"):
+            return_dict["drag_loss"] *= self.drag_weight
+
+        loss = 0 
+        for k, v in return_dict.items():
+            v = v * getattr(config, k + "_weight", 1)
+            loss = loss + v.mean()
+        
+        return_dict["val_loss"] = loss.item()
+
+        pred = datamodule.decode(normalized_pred.clone())
+        gt = data_dict["time_avg_pressure"].to(self.device).view_as(pred)
+        rel_l2 = torch.linalg.vector_norm(pred - gt) / torch.linalg.vector_norm(gt)
+        rel_l1 = torch.sum(torch.abs(pred - gt)) / torch.sum(torch.abs(gt))
+        return_dict["pressure_rel_l2"] = rel_l2.item()
+        return_dict["pressure_rel_l1"] = rel_l1.item()
 
         return return_dict
 

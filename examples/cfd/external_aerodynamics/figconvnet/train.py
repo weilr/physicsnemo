@@ -28,7 +28,7 @@ from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 
 import torch
-import torch.distributed
+import torch.distributed as dist
 import torch.utils
 import torch.utils.data
 import torchinfo
@@ -145,27 +145,28 @@ def val_model(model, datamodule, config, autocast, loss_fn=None):
         batch_size=config.train.batch_size, **config.train.dataloader
     )
 
-    val_loss_meter = AverageMeter()
+    val_meter = AverageMeterDict()
     for i, data_dict in enumerate(val_loader):
         with autocast():
-            loss_dict = model.loss_dict(
-                data_dict, loss_fn=loss_fn, datamodule=datamodule
+            loss_dict = model.val_dict(
+                data_dict, config, loss_fn=loss_fn, datamodule=datamodule
             )
-
-        loss = 0
-        for k, v in loss_dict.items():
-            v = v * getattr(config, k + "_weight", 1)
-            loss = loss + v.mean()
-        val_loss_meter.update(loss.item())
-
+            val_meter.update(loss_dict)
         if i % config.train.print_interval == 0:
-            print_str = f"[Validation] Iter {i} loss: {loss.item():.8f}, "
-            for k, v in loss_dict.items():
-                print_str += f"{k}: {v.item():.8f}, "  # only print the number
+            print_str = f"[Validation] Iter {i}: "
+            for k, v in val_meter.avg.items():
+                if isinstance(v, torch.Tensor):
+                    v = v.item()
+                if isinstance(v, float):
+                    print_str += f"{k}: {v:.8f}, "
+                else:
+                    print_str += f"{k}: {v}, "
             logger.info(print_str)
-        
+    
+    val_meter.all_gather_attributes()
+
     model.train()
-    return val_loss_meter.avg
+    return val_meter.avg
 
 
 @torch.no_grad()
@@ -333,12 +334,18 @@ def train(config: DictConfig, signal_handler: SignalHandler):
 
     # Initialize EarlyStopping if enabled
     if config.train.early_stopping.enabled and dist.rank == 0:
+        # Get metric weights from config or use default
+        metric_weights = getattr(config.train.early_stopping, "metric_weights", {"val_loss": 1.0})
+        mode = getattr(config.train.early_stopping, "mode", "min")
+        
         early_stopping = EarlyStopping(
             patience=config.train.early_stopping.patience,
             delta=config.train.early_stopping.delta,
             verbose=config.train.early_stopping.verbose,
             save_state_fn=_save_state,
             logger=logger,
+            metric_weights=metric_weights,
+            mode=mode,
         )
 
     end_epoch = config.train.num_epochs-1
@@ -413,11 +420,17 @@ def train(config: DictConfig, signal_handler: SignalHandler):
         loggers.log_scalar("train/epoch_train_l2", train_l2_meter.avg, tot_iter)
         loggers.log_scalar("train/train_epoch_duration", t2 - t1, tot_iter)
         loggers.log_scalar("train/epoch", ep, tot_iter)
+
+        # Save the weights, optimization state, and scheduler state into one file
+        if ep % config.train.save_interval == 0 or signal_handler.is_stopped():
+            # save the model
+            _save_state(model, optimizer, scheduler, scaler, ep, tot_iter, config)
         
         # Validation
         t1 = default_timer()
-        val_loss = val_model(model.model(), datamodule, config, autocast, loss_fn=loss_fn)
+        val_dict = val_model(model.model(), datamodule, config, autocast, loss_fn=loss_fn)
         t2 = default_timer()
+        val_loss = val_dict["val_loss"]
         logger.info(f"Validation epoch {ep} took {t2 - t1:.2f} seconds. Validation Loss: {val_loss:.8f}")
         loggers.log_scalar("val/loss", val_loss, tot_iter)
         
@@ -434,16 +447,25 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             else:
                 scheduler.step()
 
-        # Save the weights, optimization state, and scheduler state into one file
-        if ep % config.train.save_interval == 0 or signal_handler.is_stopped():
-            # save the model
-            _save_state(model, optimizer, scheduler, scaler, ep, tot_iter, config)
-        # EarlyStopping
-        if config.train.early_stopping.enabled and dist.rank == 0:
-            early_stopping(val_loss, model, optimizer=optimizer, scheduler=scheduler, scaler=scaler, epoch=ep, 
-                tot_iter=tot_iter, config=config, file_name=f"best_model.pth")
+        # Simple early stopping based on validation loss only (backward compatibility)
+        if config.train.early_stopping.enabled and  dist.rank == 0:
+            es_metrics = {}
+            for k, v in val_dict.items():
+                if k in config.train.early_stopping.metric_weights:
+                    es_metrics[k] = v
+            
+            early_stopping(es_metrics, 
+                model, 
+                optimizer=optimizer, 
+                scheduler=scheduler, 
+                scaler=scaler, 
+                epoch=ep, 
+                tot_iter=tot_iter, 
+                config=config, 
+                file_name=f"best_model.pth"
+            )
             if early_stopping.early_stop:
-                logger.info(f"Early stopping triggered in epoch {ep}, exiting training loop...")
+                logger.info(f"Early stopping triggered in epoch {ep} with validation loss, exiting training loop...")
                 signal_handler.stop()
                 
         # Make sure all processes check is_stopped() to sync the stop signal

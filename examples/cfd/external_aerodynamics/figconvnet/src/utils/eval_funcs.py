@@ -56,6 +56,14 @@ def rrmse(y_true: Float[Tensor, "B"], y_pred: Float[Tensor, "B"]) -> Float[Tenso
     """Compute the relative RMSE."""
     return torch.linalg.vector_norm(y_pred - y_true) / torch.linalg.vector_norm(y_true)
 
+def relative_l2_error(y_true: Float[Tensor, "B"], y_pred: Float[Tensor, "B"]) -> Float[Tensor, "1"]:
+    """Compute the relative L2 error."""
+    return torch.linalg.vector_norm(y_pred - y_true) / torch.linalg.vector_norm(y_true)
+
+def relative_l1_error(y_true: Float[Tensor, "B"], y_pred: Float[Tensor, "B"]) -> Float[Tensor, "1"]:
+    """Compute the relative L1 error."""
+    return torch.sum(torch.abs(y_pred - y_true)) / torch.sum(torch.abs(y_true))       
+
 
 def eval_all_metrics(
     y_true: Float[Tensor, "B"], y_pred: Float[Tensor, "B"], prefix: Optional[str] = None
@@ -74,6 +82,8 @@ def eval_all_metrics(
         "mae": mean_absolute_error(y_true, y_pred).cpu().item(),
         "maxae": max_absolute_error(y_true, y_pred).cpu().item(),
         "rrmse": rrmse(y_true, y_pred).cpu().item(),
+        "rel_l2": relative_l2_error(y_true, y_pred).cpu().item(),
+        "rel_l1": relative_l1_error(y_true, y_pred).cpu().item(),
     }
     if prefix is not None:
         out_dict = {f"{prefix}_{k}": v for k, v in out_dict.items()}

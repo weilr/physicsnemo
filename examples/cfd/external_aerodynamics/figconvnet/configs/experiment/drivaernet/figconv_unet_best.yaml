@@ -21,33 +21,42 @@ defaults:
   - /model: figconv_unet_drivaer
   - /loss: mseloss
   - /optimizer: adamw
-  - /lr_scheduler: reducelronplateau
+  - /lr_scheduler: steplr
 
 rank0_only: true
 
-test_best_only: true
-output: outputs/2025-05-19/16-20-28
+# test_best_only: true
+# output: outputs/2025-05-19/16-20-28
 
 train:
   batch_size: 16
-  num_epochs: 0
+  num_epochs: 1000
   dataloader:
-    num_workers: 16
-  early_stopping:
-    enabled: true
-    patience: 50
+    num_workers: 0
+    pin_memory: true
+    shuffle: true
+  lr_scheduler_mode: epoch
   print_interval: 20
   save_interval: 1
   save_checkpoints: 2
   resume: false
-
+  early_stopping:
+    enabled: true
+    patience: 30  # Number of epochs to wait before stopping
+    verbose: true  # Whether to print messages
+    delta: 0.001  # Minimum change in validation loss to qualify as an improvement
+    eval_interval: 5  # Evaluate early stopping every N epochs, independent of eval.interval
+    mode: "min"  # Whether to minimize (for losses) or maximize (for accuracies) metrics
+    metric_weights:  # Weights for different metrics, all metrics should be in the same direction (min or max)
+      val_loss: 1.0  # Validation loss (primary metric)
+      pressure_rel_l2: 1.0  
 eval:
   interval: 5
   batch_size: 16
   plot_interval: 20
   print_interval: 20
   dataloader:
-    num_workers: 16
+    num_workers: 0
 
 model:
   aabb_max: [ 2.75,  1.5,  1.0]
@@ -73,11 +82,13 @@ model:
   use_rel_pos_encode: true
 
 lr_scheduler:
-  factor: 0.1
-  patience: 10
+  # factor: 0.5
+  # patience: 10
+  gamma: 0.1
+  step_size: 25
 
 optimizer:
-  lr: 0.001
+  lr: 0.004
   weight_decay: 0.0001
 
 loggers:

@@ -24,6 +24,8 @@ hydra:
     dir: ${output}
   output_subdir: hydra  # Default is .hydra which causes files not being uploaded in W&B.
 
+test_best_only: false # test the best model only
+
 train:
   num_epochs: 100
   batch_size: 4
@@ -42,6 +44,11 @@ train:
     patience: 40  # Number of epochs to wait before stopping
     verbose: true  # Whether to print messages
     delta: 0.001  # Minimum change in validation loss to qualify as an improvement
+    eval_interval: 5  # Evaluate early stopping every N epochs, independent of eval.interval
+    mode: "min"  # Whether to minimize (for losses) or maximize (for accuracies) metrics
+    metric_weights:  # Weights for different metrics, all metrics should be in the same direction (min or max)
+      val_loss: 1.0  # Validation loss (primary metric)
+      pressure_rel_l2: 1.0  # Negative weight for R2 score (maximize R2 while minimizing others)
 
 eval:
   loss: null
