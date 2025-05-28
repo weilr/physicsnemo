@@ -18,21 +18,28 @@
 
 defaults:
   - /data: drivaernet
+  # - /model: figconv_unet_enhanced_drivaer
   - /model: figconv_unet_drivaer
   - /loss: mseloss
   - /optimizer: adamw
-  - /lr_scheduler: steplr
+  - /lr_scheduler: reducelronplateau
+  # - /lr_scheduler: steplr
+
 
 rank0_only: true
 
+# Loss weights
+# pressure_loss_weight: 1.0    # 主要任务权重
+# drag_loss_weight: 0.3        # 辅助任务权重，设置较小以不影响主要任务
+
 # test_best_only: true
-# output: outputs/2025-05-19/16-20-28
+# output: outputs/2025-05-23/18-43-01
 
 train:
-  batch_size: 16
+  batch_size: 5
   num_epochs: 1000
   dataloader:
-    num_workers: 0
+    num_workers: 0  # 增加num_workers提高数据加载效率
     pin_memory: true
     shuffle: true
   lr_scheduler_mode: epoch
@@ -42,36 +49,41 @@ train:
   resume: false
   early_stopping:
     enabled: true
-    patience: 30  # Number of epochs to wait before stopping
+    patience: 40  # Number of epochs to wait before stopping
     verbose: true  # Whether to print messages
     delta: 0.001  # Minimum change in validation loss to qualify as an improvement
-    eval_interval: 5  # Evaluate early stopping every N epochs, independent of eval.interval
     mode: "min"  # Whether to minimize (for losses) or maximize (for accuracies) metrics
     metric_weights:  # Weights for different metrics, all metrics should be in the same direction (min or max)
       val_loss: 1.0  # Validation loss (primary metric)
-      pressure_rel_l2: 1.0  
+      # pressure_rel_l2: 1.0 
+      
 eval:
   interval: 5
-  batch_size: 16
+  batch_size: 5
   plot_interval: 20
   print_interval: 20
   dataloader:
     num_workers: 0
-
+data:
+  num_points: 16384
 model:
   aabb_max: [ 2.75,  1.5,  1.0]
   aabb_min: [-2.75, -1.5, -1.0]
   hidden_channels: [16, 32, 48]
   in_channels: 1
   kernel_size: 5
-  neighbor_search_type: radius
+  # neighbor_search_type: radius
+  neighbor_search_type: knn
+  knn_k: 32
   num_down_blocks: [1, 1] 
   num_up_blocks: [1, 1]
   num_levels: 2
   out_channels: 1
   pooling_layers: [2]
   pooling_type: max
+  # pos_encode_dim: 32 # 64
   reductions: [mean]
+  # reductions: [mean, max]
   resolution_memory_format_pairs:
     - ${res_mem_pair:b_xc_y_z, [  5, 150, 100]}
     - ${res_mem_pair:b_yc_x_z, [250,   3, 100]}
@@ -79,16 +91,19 @@ model:
     # - ${res_mem_pair:b_xc_y_z, [8, 150, 100]}
     # - ${res_mem_pair:b_yc_x_z, [250, 6, 100]}
     # - ${res_mem_pair:b_zc_x_y, [250, 150, 4]}
+    # - ${res_mem_pair:b_xc_y_z, [11, 150, 100]}
+    # - ${res_mem_pair:b_yc_x_z, [275, 6, 100]}
+    # - ${res_mem_pair:b_zc_x_y, [275, 150, 4]}
   use_rel_pos_encode: true
 
 lr_scheduler:
-  # factor: 0.5
-  # patience: 10
-  gamma: 0.1
-  step_size: 25
+  factor: 0.5
+  patience: 10
+  # gamma: 0.5
+  # step_size: 25
 
 optimizer:
-  lr: 0.004
+  lr: 0.001
   weight_decay: 0.0001
 
 loggers:

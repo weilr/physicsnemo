@@ -270,6 +270,9 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             find_unused_parameters=dist.find_unused_parameters,
         )
         logger.info("Initialized DDP.")
+        # 不确定是否有效
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+
     # Set the original model getter to simplify access.
     assert not hasattr(model, "model")
     type(model).model = (lambda m: m.module) if dist.distributed else (lambda m: m)
@@ -433,19 +436,18 @@ def train(config: DictConfig, signal_handler: SignalHandler):
         val_loss = val_dict["val_loss"]
         logger.info(f"Validation epoch {ep} took {t2 - t1:.2f} seconds. Validation Loss: {val_loss:.8f}")
         loggers.log_scalar("val/loss", val_loss, tot_iter)
-        
+
+        old_lr =  scheduler.get_last_lr()[0]
         if config.train.lr_scheduler_mode == "epoch":
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                 val_loss_tensor = torch.tensor(val_loss, device="cuda")
                 torch.distributed.all_reduce(val_loss_tensor, op=torch.distributed.ReduceOp.AVG)
-                
-                old_lr = optimizer.param_groups[0]['lr']
                 scheduler.step(val_loss_tensor.item())
-                new_lr = optimizer.param_groups[0]['lr']
-                if new_lr != old_lr:
-                    logger.info(f'Learning rate decreased from {old_lr:.6f} to {new_lr:.6f}')
             else:
                 scheduler.step()
+        new_lr =  scheduler.get_last_lr()[0]
+        if new_lr != old_lr:
+            logger.info(f'Learning rate decreased from {old_lr:.6f} to {new_lr:.6f}')
 
         # Simple early stopping based on validation loss only (backward compatibility)
         if config.train.early_stopping.enabled and  dist.rank == 0:

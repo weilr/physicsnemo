@@ -19,15 +19,19 @@ from typing import Dict, List, Literal, Optional, Tuple, Union
 import matplotlib
 import torch
 from torch import Tensor
+import torch.nn as nn
+
+from physicsnemo.models.figconvnet.point_feature_grid_conv import GridFeatureMemoryFormatConverter
+from physicsnemo.models.figconvnet.point_feature_grid_ops import PointFeatureToGrid
+from physicsnemo.models.figconvnet.geometries import (
+    GridFeaturesMemoryFormat,
+    GridFeatures,
+)
 
 matplotlib.use("Agg")  # use non-interactive backend
 import matplotlib.pyplot as plt
 
 from physicsnemo.models.figconvnet.figconvunet import FIGConvUNet
-
-from physicsnemo.models.figconvnet.geometries import (
-    GridFeaturesMemoryFormat,
-)
 
 from physicsnemo.models.figconvnet.components.reductions import REDUCTION_TYPES
 
@@ -464,3 +468,164 @@ def drivaer_create_subplot(ax, vertices, data, title):
     ax.xaxis.pane.fill = False
     ax.yaxis.pane.fill = False
     ax.zaxis.pane.fill = False
+
+
+class GridFeatureProcessor(nn.Module):
+    """Process grid features with residual blocks and proper normalization."""
+    
+    def __init__(self, in_channels: int, out_channels: int, num_residual_blocks: int = 3):
+        super().__init__()
+        
+        self.input_proj = nn.Sequential(
+            nn.Linear(in_channels, in_channels),
+            nn.LayerNorm(in_channels),
+            nn.GELU()
+        )
+        
+        self.residual_blocks = nn.ModuleList([
+            ResidualBlock(
+                nn.Sequential(
+                    nn.Linear(in_channels, in_channels * 2),
+                    nn.LayerNorm(in_channels * 2),
+                    nn.GELU(),
+                    nn.Linear(in_channels * 2, in_channels),
+                    nn.LayerNorm(in_channels),
+                    nn.GELU(),
+                )
+            ) for _ in range(num_residual_blocks)
+        ])
+        
+        self.output_proj = nn.Sequential(
+            nn.Linear(in_channels, in_channels // 2),
+            nn.LayerNorm(in_channels // 2),
+            nn.GELU(),
+            nn.Linear(in_channels // 2, out_channels)
+        )
+    
+    def forward(self, grid_features):
+        # Extract tensor from GridFeatures
+        features = grid_features.features
+        
+        # Process features
+        features = self.input_proj(features)
+        
+        for block in self.residual_blocks:
+            features = block(features)
+            
+        features = self.output_proj(features)
+        
+        # Create new GridFeatures with processed features
+        return GridFeatures(
+            vertices=grid_features.vertices,
+            features=features,
+            memory_format=grid_features.memory_format,
+            grid_shape=grid_features.grid_shape,
+            num_channels=features.shape[-1] if grid_features.memory_format == GridFeaturesMemoryFormat.b_x_y_z_c else None
+        )
+
+class ResidualBlock(nn.Module):
+    """A residual block that adds skip connection to any given module."""
+    
+    def __init__(self, module: nn.Module):
+        super().__init__()
+        self.module = module
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.module(x)  # Skip connection: x + F(x)
+
+class EnhancedFIGConvUNetDrivAerNet(FIGConvUNetDrivAerNet):
+    """Enhanced version of FIGConvUNetDrivAerNet with stronger point-to-grid feature extraction."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        hidden_channels: List[int],
+        num_levels: int = 3,
+        num_down_blocks: Union[int, List[int]] = 1,
+        num_up_blocks: Union[int, List[int]] = 1,
+        mlp_channels: List[int] = [512, 512],
+        aabb_max: Tuple[float, float, float] = (2.5, 1.5, 1.0),
+        aabb_min: Tuple[float, float, float] = (-2.5, -1.5, -1.0),
+        voxel_size: Optional[float] = None,
+        resolution_memory_format_pairs: List[
+            Tuple[GridFeaturesMemoryFormat, Tuple[int, int, int]]
+        ] = [
+            (GridFeaturesMemoryFormat.b_xc_y_z, (2, 128, 128)),
+            (GridFeaturesMemoryFormat.b_yc_x_z, (128, 2, 128)),
+            (GridFeaturesMemoryFormat.b_zc_x_y, (128, 128, 2)),
+        ],
+        use_rel_pos: bool = True,
+        use_rel_pos_encode: bool = True,
+        pos_encode_dim: int = 32,
+        communication_types: List[Literal["mul", "sum"]] = ["sum"],
+        to_point_sample_method: Literal["graphconv", "interp"] = "graphconv",
+        neighbor_search_type: Literal["knn", "radius"] = "knn",
+        knn_k: int = 16,
+        reductions: List[REDUCTION_TYPES] = ["mean"],
+        drag_loss_weight: Optional[float] = None,
+        pooling_type: Literal["attention", "max", "mean"] = "max",
+        pooling_layers: List[int] = None,
+        point_to_grid_hidden_dim: Optional[int] = 128,  # New parameter for enhanced point-to-grid feature extraction
+    ):
+        # Initialize with a larger initial hidden channel for point-to-grid conversion        
+        super().__init__(
+            in_channels=in_channels,  # Use larger initial hidden channels
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            hidden_channels=hidden_channels,  # Keep UNet channels unchanged
+            num_levels=num_levels,
+            num_down_blocks=num_down_blocks,
+            num_up_blocks=num_up_blocks,
+            mlp_channels=mlp_channels,
+            aabb_max=aabb_max,
+            aabb_min=aabb_min,
+            voxel_size=voxel_size,
+            resolution_memory_format_pairs=resolution_memory_format_pairs,
+            use_rel_pos=use_rel_pos,
+            use_rel_pos_encode=use_rel_pos_encode,
+            pos_encode_dim=pos_encode_dim,
+            communication_types=communication_types,
+            to_point_sample_method=to_point_sample_method,
+            neighbor_search_type=neighbor_search_type,
+            knn_k=knn_k,
+            reductions=reductions,
+            drag_loss_weight=drag_loss_weight,
+            pooling_type=pooling_type,
+            pooling_layers=pooling_layers,
+        )
+        
+        # Override point_feature_to_grids with enhanced version
+        self.point_feature_to_grids = nn.ModuleList()
+        for mem_fmt, res in resolution_memory_format_pairs:
+            to_grid = nn.Sequential(
+                # 1. Initial feature extraction
+                PointFeatureToGrid(
+                    in_channels=hidden_channels[0],
+                    out_channels=point_to_grid_hidden_dim,  # Use larger intermediate features
+                    aabb_max=aabb_max,
+                    aabb_min=aabb_min,
+                    voxel_size=voxel_size,
+                    resolution=res,
+                    use_rel_pos=use_rel_pos,
+                    use_rel_pos_encode=use_rel_pos_encode,
+                    pos_encode_dim=pos_encode_dim,
+                    reductions=reductions,
+                    neighbor_search_type=neighbor_search_type,
+                    knn_k=knn_k,
+                ),
+                # 2. Feature processing with residual blocks
+                GridFeatureProcessor(
+                    point_to_grid_hidden_dim,
+                    hidden_channels[0],
+                    num_residual_blocks=3
+                ),
+                # 3. Final format conversion
+                GridFeatureMemoryFormatConverter(memory_format=mem_fmt),
+            )
+            self.point_feature_to_grids.append(to_grid)
+
+    def data_dict_to_input(self, data_dict) -> torch.Tensor:
+        vertices = data_dict["cell_centers"].float()
+        return vertices.to(self.device)

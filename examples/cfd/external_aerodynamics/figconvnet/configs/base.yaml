@@ -48,7 +48,6 @@ train:
     mode: "min"  # Whether to minimize (for losses) or maximize (for accuracies) metrics
     metric_weights:  # Weights for different metrics, all metrics should be in the same direction (min or max)
       val_loss: 1.0  # Validation loss (primary metric)
-      pressure_rel_l2: 1.0  # Negative weight for R2 score (maximize R2 while minimizing others)
 
 eval:
   loss: null
