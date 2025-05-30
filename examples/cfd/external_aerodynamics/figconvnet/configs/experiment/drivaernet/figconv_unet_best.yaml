@@ -20,7 +20,8 @@ defaults:
   - /data: drivaernet
   # - /model: figconv_unet_enhanced_drivaer
   - /model: figconv_unet_drivaer
-  - /loss: mseloss
+  # - /loss: mseloss
+  - /loss: huberloss
   - /optimizer: adamw
   - /lr_scheduler: reducelronplateau
   # - /lr_scheduler: steplr
@@ -35,8 +36,18 @@ rank0_only: true
 # test_best_only: true
 # output: outputs/2025-05-23/18-43-01
 
+amp:
+  enabled: false
+  autocast:
+    dtype: torch.float16
+  scaler:
+    _target_: torch.cuda.amp.GradScaler
+    enabled: ${..enabled}
+  clip_grad: false
+  grad_max_norm: 2.0
+
 train:
-  batch_size: 5
+  batch_size: 12
   num_epochs: 1000
   dataloader:
     num_workers: 0  # 增加num_workers提高数据加载效率
@@ -51,60 +62,74 @@ train:
     enabled: true
     patience: 40  # Number of epochs to wait before stopping
     verbose: true  # Whether to print messages
-    delta: 0.001  # Minimum change in validation loss to qualify as an improvement
+    delta: 0.00000001  # Minimum change in validation loss to qualify as an improvement
     mode: "min"  # Whether to minimize (for losses) or maximize (for accuracies) metrics
     metric_weights:  # Weights for different metrics, all metrics should be in the same direction (min or max)
       val_loss: 1.0  # Validation loss (primary metric)
       # pressure_rel_l2: 1.0 
-      
-eval:
-  interval: 5
-  batch_size: 5
-  plot_interval: 20
-  print_interval: 20
-  dataloader:
-    num_workers: 0
-data:
-  num_points: 16384
-model:
-  aabb_max: [ 2.75,  1.5,  1.0]
-  aabb_min: [-2.75, -1.5, -1.0]
-  hidden_channels: [16, 32, 48]
-  in_channels: 1
-  kernel_size: 5
-  # neighbor_search_type: radius
-  neighbor_search_type: knn
-  knn_k: 32
-  num_down_blocks: [1, 1] 
-  num_up_blocks: [1, 1]
-  num_levels: 2
-  out_channels: 1
-  pooling_layers: [2]
-  pooling_type: max
-  # pos_encode_dim: 32 # 64
-  reductions: [mean]
-  # reductions: [mean, max]
-  resolution_memory_format_pairs:
-    - ${res_mem_pair:b_xc_y_z, [  5, 150, 100]}
-    - ${res_mem_pair:b_yc_x_z, [250,   3, 100]}
-    - ${res_mem_pair:b_zc_x_y, [250, 150,   2]}
-    # - ${res_mem_pair:b_xc_y_z, [8, 150, 100]}
-    # - ${res_mem_pair:b_yc_x_z, [250, 6, 100]}
-    # - ${res_mem_pair:b_zc_x_y, [250, 150, 4]}
-    # - ${res_mem_pair:b_xc_y_z, [11, 150, 100]}
-    # - ${res_mem_pair:b_yc_x_z, [275, 6, 100]}
-    # - ${res_mem_pair:b_zc_x_y, [275, 150, 4]}
-  use_rel_pos_encode: true
 
 lr_scheduler:
   factor: 0.5
-  patience: 10
+  patience: 12
   # gamma: 0.5
   # step_size: 25
 
 optimizer:
   lr: 0.001
   weight_decay: 0.0001
+      
+eval:
+  batch_size: 12
+  interval: 5
+  plot_interval: 20
+  print_interval: 20
+  dataloader:
+    num_workers: 0
+
+data:
+  num_points: 16384  #32768
+  preprocessors:
+  - _target_: src.data.data_augmentation.DrivAerNetAugmentationPreprocessor
+    config:
+      enable_translation: true
+      translation_range: [0.9, 1.1]  
+      enable_jitter: true
+      jitter_sigma: 0.01
+      jitter_clip: 0.02
+      enable_drop: false
+      drop_rate: 0.1
+  - _target_: src.data.drivaernet_datamodule.DrivAerNetPreprocessor
+    num_points: ${...num_points}
+model:
+  aabb_max: [ 2.75,  1.5,  1.0]
+  aabb_min: [-2.75, -1.5, -1.0]
+  # hidden_channels: [16, 32, 48]
+  hidden_channels: [16, 32, 48]
+  in_channels: 1
+  kernel_size: 5
+  neighbor_search_type: radius
+  # neighbor_search_type: knn
+  # knn_k: 32
+  num_down_blocks: [1, 1] 
+  num_up_blocks: [1, 1]
+  num_levels: 2
+  out_channels: 1
+  pooling_layers: [2]
+  pooling_type: max
+  pos_encode_dim: 64 # 64
+  # reductions: [mean]
+  reductions: [mean, max]
+  resolution_memory_format_pairs:
+    # - ${res_mem_pair:b_xc_y_z, [  5, 150, 100]}
+    # - ${res_mem_pair:b_yc_x_z, [250,   3, 100]}
+    # - ${res_mem_pair:b_zc_x_y, [250, 150,   2]}
+    # - ${res_mem_pair:b_xc_y_z, [8, 150, 100]}
+    # - ${res_mem_pair:b_yc_x_z, [250, 6, 100]}
+    # - ${res_mem_pair:b_zc_x_y, [250, 150, 4]}
+    - ${res_mem_pair:b_xc_y_z, [11, 150, 100]}
+    - ${res_mem_pair:b_yc_x_z, [275, 6, 100]}
+    - ${res_mem_pair:b_zc_x_y, [275, 150, 4]}
+  use_rel_pos_encode: true
 
 loggers:
   wandb:
@@ -113,4 +138,4 @@ loggers:
     group_name: fignet
     # run_name: FIGConvNet-level2-16,16,16-res250-150-100-pool-max-2-aabb-275x15x1-ks5-np32768-b8x2
     run_name: FIGConvNet-${now:%Y%m%d_%H%M%S}-level${model.num_levels}-${model.hidden_channels}-pool-${model.pooling_type}-${model.pooling_layers.0}-aabb-${model.aabb_max[0]}x${model.aabb_max[1]}x${model.aabb_max[2]}-ks${model.kernel_size}-np${data.num_points}-b${train.batch_size}-res${model.resolution_memory_format_pairs}
-seed: 1
+seed: 42

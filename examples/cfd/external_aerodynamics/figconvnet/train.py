@@ -569,7 +569,10 @@ def main(config: DictConfig):
         set_seed(config.seed)
 
     with SignalHandler(status_path=config.signal_handler.status_path) as signal_handler:
+        t1 = default_timer()
         train(config, signal_handler)
+        t2 = default_timer()
+        logger.info(f"Training took {(t2-t1)/3600:.2f}hrs")
 
 
 def _init_hydra_resolvers():
