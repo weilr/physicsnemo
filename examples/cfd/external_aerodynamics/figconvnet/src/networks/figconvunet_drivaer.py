@@ -77,6 +77,7 @@ class FIGConvUNetDrivAerNet(FIGConvUNet):
         drag_loss_weight: Optional[float] = None,
         pooling_type: Literal["attention", "max", "mean"] = "max",
         pooling_layers: List[int] = None,
+        use_mamba: bool = False,
     ):
         super().__init__(
             in_channels=hidden_channels[0],
@@ -102,6 +103,7 @@ class FIGConvUNetDrivAerNet(FIGConvUNet):
             drag_loss_weight=drag_loss_weight,
             pooling_type=pooling_type,
             pooling_layers=pooling_layers,
+            use_mamba=use_mamba,
         )
 
     def data_dict_to_input(self, data_dict) -> torch.Tensor:
@@ -568,6 +570,7 @@ class EnhancedFIGConvUNetDrivAerNet(FIGConvUNetDrivAerNet):
         pooling_type: Literal["attention", "max", "mean"] = "max",
         pooling_layers: List[int] = None,
         point_to_grid_hidden_dim: Optional[int] = 128,  # New parameter for enhanced point-to-grid feature extraction
+        use_mamba: bool = False,
     ):
         # Initialize with a larger initial hidden channel for point-to-grid conversion        
         super().__init__(
@@ -594,6 +597,7 @@ class EnhancedFIGConvUNetDrivAerNet(FIGConvUNetDrivAerNet):
             drag_loss_weight=drag_loss_weight,
             pooling_type=pooling_type,
             pooling_layers=pooling_layers,
+            use_mamba=use_mamba,
         )
         
         # Override point_feature_to_grids with enhanced version
