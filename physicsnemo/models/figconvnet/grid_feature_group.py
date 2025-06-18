@@ -23,6 +23,7 @@ import torch.nn.functional as F
 from jaxtyping import Float
 from torch import Tensor
 
+from physicsnemo.models.figconvnet.components.mamba import MambaLayer
 from physicsnemo.models.figconvnet.components.reductions import REDUCTION_TYPES
 from physicsnemo.models.figconvnet.geometries import (
     GridFeatures,
@@ -114,9 +115,22 @@ class GridFeaturesGroupIntraCommunication(nn.Module):
     i} G_j(v)$ where $v$ are the vertices of $G_i$.
     """
 
-    def __init__(self, communication_type: Literal["sum", "mul"] = "sum") -> None:
+    def __init__(
+        self,
+        communication_type: Literal["sum", "mul"] = "sum",
+        use_mamba: bool = False,
+        out_channels: Optional[int] = None,
+        mamba_cfg: Optional[dict] = None,
+    ) -> None:
         super().__init__()
         self.communication_type = communication_type
+        self.use_mamba = use_mamba
+        self.mamba_cfg = mamba_cfg
+
+        if self.use_mamba:
+            self.mamba = MambaLayer(dim=out_channels, **self.mamba_cfg)
+        else:
+            self.mamba = None
 
     @profile
     def forward(self, grid_features_group: GridFeatureGroup) -> GridFeatureGroup:
@@ -171,6 +185,17 @@ class GridFeaturesGroupIntraCommunication(nn.Module):
                 else:
                     raise NotImplementedError
 
+        # 使用Mamba处理通信后的特征
+        if self.use_mamba and self.mamba is not None:
+            for i in range(len(grid_features_group)):
+                # 记录原始数据类型
+                orig_dtype = grid_features_group[i].features.dtype
+                # 应用Mamba处理
+                grid_features_group[i].features = self.mamba(grid_features_group[i].features)
+                # 确保数据类型一致
+                if grid_features_group[i].features.dtype != orig_dtype:
+                    grid_features_group[i].features = grid_features_group[i].features.to(orig_dtype)
+
         # convert grid_features in grid_features_group back to original memory format
         for i, grid_features in enumerate(grid_features_group):
             grid_features.to(memory_format=orig_memory_formats[i])
@@ -189,7 +214,11 @@ class GridFeatureGroupIntraCommunications(nn.Module):
     """
 
     def __init__(
-        self, communication_types: List[Literal["sum", "mul"]] = ["sum"]
+        self,
+        communication_types: List[Literal["sum", "mul"]] = ["sum"],
+        out_channels: Optional[int] = None,
+        use_mamba: bool = False,
+        mamba_cfg: Optional[dict] = None,
     ) -> None:
         super().__init__()
         self.intra_communications = nn.ModuleList()
@@ -197,7 +226,10 @@ class GridFeatureGroupIntraCommunications(nn.Module):
         for communication_type in communication_types:
             self.intra_communications.append(
                 GridFeaturesGroupIntraCommunication(
-                    communication_type=communication_type
+                    communication_type=communication_type,
+                    use_mamba=use_mamba,
+                    out_channels=out_channels,
+                    mamba_cfg=mamba_cfg,
                 )
             )
 
@@ -285,6 +317,8 @@ class GridFeatureConv2DBlocksAndIntraCommunication(nn.Module):
         stride: int = 1,
         up_stride: Optional[int] = None,
         communication_types: List[Literal["sum", "mul"]] = ["sum"],
+        use_mamba: bool = False,
+        mamba_cfg: Optional[dict] = {"d_state": 16, "d_conv": 4, "expand": 2},
     ):
         super().__init__()
         self.convs = nn.ModuleList()
@@ -301,7 +335,10 @@ class GridFeatureConv2DBlocksAndIntraCommunication(nn.Module):
                 )
             )
         self.intra_communications = GridFeatureGroupIntraCommunications(
-            communication_types=communication_types
+            communication_types=communication_types,
+            use_mamba=use_mamba,
+            out_channels=out_channels,
+            mamba_cfg=mamba_cfg,
         )
         # If len(communication_types) > 1, apply linear projection to reduce the channel size
         if isinstance(communication_types, str):

@@ -38,3 +38,5 @@ resolution_memory_format_pairs:
 
 reductions:
   - mean
+
+use_mamba: false

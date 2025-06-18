@@ -23,15 +23,17 @@ defaults:
   # - /loss: mseloss
   - /loss: huberloss
   - /optimizer: adamw
-  - /lr_scheduler: reducelronplateau
+  # - /optimizer: adam  
+  # - /lr_scheduler: reducelronplateau
   # - /lr_scheduler: steplr
+  - /lr_scheduler: cosineannealingwarmrestarts
 
 
 rank0_only: true
 
 # Loss weights
-# pressure_loss_weight: 1.0    # 主要任务权重
-# drag_loss_weight: 0.3        # 辅助任务权重，设置较小以不影响主要任务
+pressure_loss_weight: 1.0    # 主要任务权重
+drag_loss_weight: 0.01       # 辅助任务权重，设置较小以不影响主要任务
 
 # test_best_only: true
 # output: outputs/2025-05-23/18-43-01
@@ -62,17 +64,23 @@ train:
     enabled: true
     patience: 40  # Number of epochs to wait before stopping
     verbose: true  # Whether to print messages
-    delta: 0.00000001  # Minimum change in validation loss to qualify as an improvement
+    # delta: 1.0e-12  # Minimum change in validation loss to qualify as an improvement
+    delta: 0  # Minimum change in validation loss to qualify as an improvement
     mode: "min"  # Whether to minimize (for losses) or maximize (for accuracies) metrics
     metric_weights:  # Weights for different metrics, all metrics should be in the same direction (min or max)
       val_loss: 1.0  # Validation loss (primary metric)
-      # pressure_rel_l2: 1.0 
-
+      # pressure_rel_l2: 1.0 [
 lr_scheduler:
-  factor: 0.5
-  patience: 12
+  # reducelronplateau
+  # factor: 0.5
+  # patience: 10
+  # steplr
   # gamma: 0.5
-  # step_size: 25
+  # step_size: 15
+  # CosineAnnealingWarmRestarts
+  T_0: 40    # 第一次重启的周期长度
+  T_mult: 1  # 每次重启后周期长度的倍数
+  eta_min: 1.0e-6  # 最小学习率 
 
 optimizer:
   lr: 0.001
@@ -88,16 +96,17 @@ eval:
 
 data:
   num_points: 16384  #32768
+  # num_points: 32768  #32768
   preprocessors:
-  - _target_: src.data.data_augmentation.DrivAerNetAugmentationPreprocessor
-    config:
-      enable_translation: true
-      translation_range: [0.9, 1.1]  
-      enable_jitter: true
-      jitter_sigma: 0.01
-      jitter_clip: 0.02
-      enable_drop: false
-      drop_rate: 0.1
+  # - _target_: src.data.data_augmentation.DrivAerNetAugmentationPreprocessor
+  #   config:
+  #     enable_translation: false
+  #     translation_range: [0.9, 1.1]
+  #     enable_jitter: true
+  #     jitter_sigma: 0.01
+  #     jitter_clip: 0.02
+  #     enable_drop: false
+  #     drop_rate: 0.1
   - _target_: src.data.drivaernet_datamodule.DrivAerNetPreprocessor
     num_points: ${...num_points}
 model:
@@ -116,7 +125,8 @@ model:
   out_channels: 1
   pooling_layers: [2]
   pooling_type: max
-  pos_encode_dim: 64 # 64
+  # pos_encode_dim: 64 # 64
+  pos_encode_dim: 32 # 64
   # reductions: [mean]
   reductions: [mean, max]
   resolution_memory_format_pairs:
@@ -126,13 +136,18 @@ model:
     # - ${res_mem_pair:b_xc_y_z, [8, 150, 100]}
     # - ${res_mem_pair:b_yc_x_z, [250, 6, 100]}
     # - ${res_mem_pair:b_zc_x_y, [250, 150, 4]}
-    - ${res_mem_pair:b_xc_y_z, [11, 150, 100]}
-    - ${res_mem_pair:b_yc_x_z, [275, 6, 100]}
-    - ${res_mem_pair:b_zc_x_y, [275, 150, 4]}
+    # - ${res_mem_pair:b_xc_y_z, [11, 150, 100]}
+    # - ${res_mem_pair:b_yc_x_z, [275, 6, 100]}
+    # - ${res_mem_pair:b_zc_x_y, [275, 150, 4]}
+    - ${res_mem_pair:b_xc_y_z, [10, 150, 100]}
+    - ${res_mem_pair:b_yc_x_z, [250, 10, 100]}
+    - ${res_mem_pair:b_zc_x_y, [250, 150, 10]}
   use_rel_pos_encode: true
+  use_mamba: true
 
 loggers:
   wandb:
+    mode: offline  # 改为离线模式
     entity: weilr987-bupt
     project_name: physicsnemo
     group_name: fignet

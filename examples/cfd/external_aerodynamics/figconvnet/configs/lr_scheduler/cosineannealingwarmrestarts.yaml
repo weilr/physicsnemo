@@ -1,0 +1,5 @@
+# CosineAnnealingWarmRestarts with warmup
+_target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+T_0: 20    # 第一次重启的周期长度
+T_mult: 1  # 每次重启后周期长度的倍数
+eta_min: 0  # 最小学习率 
