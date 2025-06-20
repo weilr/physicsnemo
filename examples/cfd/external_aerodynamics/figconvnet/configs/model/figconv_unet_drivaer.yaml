@@ -40,3 +40,7 @@ reductions:
   - mean
 
 use_mamba: false
+mamba_cfg:
+  d_state: 16  # 或 64
+  d_conv: 4
+  expand: 2

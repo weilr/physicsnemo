@@ -22,8 +22,8 @@ defaults:
   - /model: figconv_unet_drivaer
   # - /loss: mseloss
   - /loss: huberloss
-  - /optimizer: adamw
-  # - /optimizer: adam  
+  # - /optimizer: adamw
+  - /optimizer: adam  
   # - /lr_scheduler: reducelronplateau
   # - /lr_scheduler: steplr
   - /lr_scheduler: cosineannealingwarmrestarts
@@ -39,7 +39,7 @@ drag_loss_weight: 0.01       # 辅助任务权重，设置较小以不影响主�
 # output: outputs/2025-05-23/18-43-01
 
 amp:
-  enabled: false
+  enabled: true
   autocast:
     dtype: torch.float16
   scaler:
@@ -49,7 +49,7 @@ amp:
   grad_max_norm: 2.0
 
 train:
-  batch_size: 12
+  batch_size: 8
   num_epochs: 1000
   dataloader:
     num_workers: 0  # 增加num_workers提高数据加载效率
@@ -78,7 +78,7 @@ lr_scheduler:
   # gamma: 0.5
   # step_size: 15
   # CosineAnnealingWarmRestarts
-  T_0: 40    # 第一次重启的周期长度
+  T_0: 30    # 第一次重启的周期长度
   T_mult: 1  # 每次重启后周期长度的倍数
   eta_min: 1.0e-6  # 最小学习率 
 
@@ -87,7 +87,7 @@ optimizer:
   weight_decay: 0.0001
       
 eval:
-  batch_size: 12
+  batch_size: 8
   interval: 5
   plot_interval: 20
   print_interval: 20
@@ -112,8 +112,8 @@ data:
 model:
   aabb_max: [ 2.75,  1.5,  1.0]
   aabb_min: [-2.75, -1.5, -1.0]
-  # hidden_channels: [16, 32, 48]
   hidden_channels: [16, 32, 48]
+  # hidden_channels: [8, 16, 32]
   in_channels: 1
   kernel_size: 5
   neighbor_search_type: radius
@@ -144,6 +144,10 @@ model:
     - ${res_mem_pair:b_zc_x_y, [250, 150, 10]}
   use_rel_pos_encode: true
   use_mamba: true
+  mamba_cfg:
+    d_state: 64  # 或 64
+    d_conv: 4
+    expand: 4
 
 loggers:
   wandb:

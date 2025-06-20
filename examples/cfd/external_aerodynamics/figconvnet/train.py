@@ -26,6 +26,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
+# from tensorboardX import SummaryWriter
 
 import torch
 import torch.distributed as dist
@@ -351,6 +352,7 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             mode=mode,
         )
 
+    # cnt = 0
     end_epoch = config.train.num_epochs-1
     for ep in range(start_epoch, config.train.num_epochs):
         model.train()
@@ -368,6 +370,47 @@ def train(config: DictConfig, signal_handler: SignalHandler):
             optimizer.zero_grad()
 
             with autocast():
+                # if cnt == 0:
+                #     writer = SummaryWriter('struct/model_visualization')
+                #     with torch.no_grad():
+                #         # Set model to eval mode temporarily
+                #         training = model.model().training
+                #         model.model().eval()
+                        
+                #         # Fix all random states
+                #         torch.manual_seed(0)
+                #         torch.cuda.manual_seed(0)
+                #         torch.backends.cudnn.deterministic = True
+                #         torch.backends.cudnn.benchmark = False
+                        
+                #         # Prepare dummy input with fixed shape and values
+                #         dummy_input = data_dict["cell_centers"].float().to(device)
+                #         dummy_input = dummy_input[:1].detach().clone()  # Use only first batch
+                #         dummy_input.requires_grad_(False)
+                        
+                #         try:
+                #             # Try to use scripting first
+                #             scripted_model = None
+                #             try:
+                #                 scripted_model = torch.jit.script(model.model())
+                #                 writer.add_graph(scripted_model, dummy_input)
+                #             except Exception as e:
+                #                 logger.warning(f"Failed to script model: {e}")
+                                
+                #             # If scripting fails, fall back to tracing
+                #             if scripted_model is None:
+                #                 with torch.jit.optimized_execution(False):
+                #                     traced_model = torch.jit.trace(model.model(), dummy_input, check_trace=False)
+                #                     writer.add_graph(traced_model, dummy_input)
+                                    
+                #         finally:
+                #             # Restore model's training mode and cudnn settings
+                #             model.model().train(training)
+                #             torch.backends.cudnn.deterministic = False
+                #             torch.backends.cudnn.benchmark = True
+                            
+                #     writer.close()
+                #     cnt += 1
                 loss_dict = model.model().loss_dict(
                     data_dict, loss_fn=loss_fn, datamodule=datamodule
                 )

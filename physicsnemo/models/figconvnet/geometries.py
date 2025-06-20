@@ -171,16 +171,22 @@ def convert_to_b_x_y_z_c(tensor, from_memory_format, num_channels):
     if from_memory_format == GridFeaturesMemoryFormat.b_zc_x_y:
         B, D_C, H, W = tensor.shape
         D, rem = divmod(D_C, num_channels)
+        # D = D_C // num_channels
+        # rem = D_C % num_channels
         assert rem == 0, "Number of channels does not match."
         return tensor.reshape(B, D, num_channels, H, W).permute(0, 3, 4, 1, 2)
     elif from_memory_format == GridFeaturesMemoryFormat.b_xc_y_z:
         B, H_C, W, D = tensor.shape
         H, rem = divmod(H_C, num_channels)
+        # H = H_C // num_channels
+        # rem = H_C % num_channels
         assert rem == 0, "Number of channels does not match."
         return tensor.reshape(B, H, num_channels, W, D).permute(0, 1, 3, 4, 2)
     elif from_memory_format == GridFeaturesMemoryFormat.b_yc_x_z:
         B, W_C, H, D = tensor.shape
         W, rem = divmod(W_C, num_channels)
+        # W = W_C // num_channels
+        # rem = W_C % num_channels
         assert rem == 0, "Number of channels does not match."
         return tensor.reshape(B, W, num_channels, H, D).permute(0, 3, 1, 4, 2)
     elif from_memory_format == GridFeaturesMemoryFormat.b_c_x_y_z:
@@ -265,14 +271,20 @@ class GridFeatures:
         if memory_format == GridFeaturesMemoryFormat.b_zc_x_y:
             B, DC, H, W = conv_output.shape
             D, rem = divmod(DC, num_channels)
+            # D = DC // num_channels
+            # rem = DC % num_channels
             assert D == grid_shape[2], "Spatial dimension D does not match."
         elif memory_format == GridFeaturesMemoryFormat.b_xc_y_z:
             B, HC, W, D = conv_output.shape
             H, rem = divmod(HC, num_channels)
+            # H = HC // num_channels
+            # rem = HC % num_channels
             assert H == grid_shape[0], "Spatial dimension H does not match."
         elif memory_format == GridFeaturesMemoryFormat.b_yc_x_z:
             B, WC, H, D = conv_output.shape
             W, rem = divmod(WC, num_channels)
+            # W = WC // num_channels
+            # rem = WC % num_channels
             assert W == grid_shape[1], "Spatial dimension W does not match."
         elif memory_format == GridFeaturesMemoryFormat.b_c_x_y_z:
             B, C, H, W, D = conv_output.shape

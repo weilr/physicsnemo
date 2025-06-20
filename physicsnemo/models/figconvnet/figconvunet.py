@@ -153,6 +153,7 @@ class FIGConvUNet(BaseModel):
         pooling_type: Literal["attention", "max", "mean"] = "max",
         pooling_layers: List[int] = None,
         use_mamba: bool = False,
+        mamba_cfg: Optional[dict] = None,
     ):
         super().__init__(meta=MetaData())
         self.in_channels = in_channels
@@ -212,6 +213,7 @@ class FIGConvUNet(BaseModel):
                     compressed_spatial_dims=compressed_spatial_dims,
                     communication_types=communication_types,
                     use_mamba=use_mamba,
+                    mamba_cfg=mamba_cfg,
                 )
             ]
             for _ in range(1, num_down_blocks[level]):
@@ -224,6 +226,7 @@ class FIGConvUNet(BaseModel):
                         compressed_spatial_dims=compressed_spatial_dims,
                         communication_types=communication_types,
                         use_mamba=use_mamba,
+                        mamba_cfg=mamba_cfg,
                     )
                 )
             down_block = nn.Sequential(*down_block)
@@ -238,6 +241,7 @@ class FIGConvUNet(BaseModel):
                     compressed_spatial_dims=compressed_spatial_dims,
                     communication_types=communication_types,
                     use_mamba=use_mamba,
+                    mamba_cfg=mamba_cfg,
                 )
             ]
             for _ in range(1, num_up_blocks[level]):
@@ -250,6 +254,7 @@ class FIGConvUNet(BaseModel):
                         compressed_spatial_dims=compressed_spatial_dims,
                         communication_types=communication_types,
                         use_mamba=use_mamba,
+                        mamba_cfg=mamba_cfg,
                     )
                 )
             up_block = nn.Sequential(*up_block)

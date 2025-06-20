@@ -126,11 +126,9 @@ class GridFeaturesGroupIntraCommunication(nn.Module):
         self.communication_type = communication_type
         self.use_mamba = use_mamba
         self.mamba_cfg = mamba_cfg
-
+        self.mamba = None
         if self.use_mamba:
             self.mamba = MambaLayer(dim=out_channels, **self.mamba_cfg)
-        else:
-            self.mamba = None
 
     @profile
     def forward(self, grid_features_group: GridFeatureGroup) -> GridFeatureGroup:
@@ -318,7 +316,7 @@ class GridFeatureConv2DBlocksAndIntraCommunication(nn.Module):
         up_stride: Optional[int] = None,
         communication_types: List[Literal["sum", "mul"]] = ["sum"],
         use_mamba: bool = False,
-        mamba_cfg: Optional[dict] = {"d_state": 16, "d_conv": 4, "expand": 2},
+        mamba_cfg: Optional[dict] = None,
     ):
         super().__init__()
         self.convs = nn.ModuleList()
