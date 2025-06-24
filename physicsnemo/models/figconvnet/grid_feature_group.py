@@ -584,3 +584,37 @@ class GridFeatureGroupPool(nn.Module):
         for grid_features, pool in zip(grid_features_group, self.pools):
             pooled_features.append(pool(grid_features))
         return torch.cat(pooled_features, dim=-1)
+
+
+class MambaSkipBlock(nn.Module):
+    """
+    A simplified Mamba block for skip connections that operates on GridFeatureGroup.
+    It applies Mamba to each 2D feature grid within the group.
+    """
+
+    def __init__(self, dim: int, compressed_spatial_dims: Tuple[int], mamba_cfg: dict):
+        super().__init__()
+        self.mamba_blocks = nn.ModuleList(
+            [MambaLayer(dim=dim * compressed_spatial_dim, **mamba_cfg) for compressed_spatial_dim in compressed_spatial_dims]
+        )
+
+    def forward(self, grid_features_group: GridFeatureGroup) -> GridFeatureGroup:
+        """
+        对GridFeatureGroup中的每个特征网格应用Mamba。
+
+        Args:
+            grid_features_group: 输入的GridFeatureGroup。
+
+        Returns:
+            一个新的GridFeatureGroup，其中的特征已经过Mamba处理。
+        """
+        for i in range(len(grid_features_group)):
+            # 记录原始数据类型
+            orig_dtype = grid_features_group[i].features.dtype
+            # 应用Mamba处理
+            grid_features_group[i].features = self.mamba_blocks[i](grid_features_group[i].features)
+            # 确保数据类型一致
+            if grid_features_group[i].features.dtype != orig_dtype:
+                grid_features_group[i].features = grid_features_group[i].features.to(orig_dtype)
+
+        return grid_features_group

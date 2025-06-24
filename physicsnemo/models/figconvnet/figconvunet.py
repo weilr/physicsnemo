@@ -44,6 +44,7 @@ from physicsnemo.models.figconvnet.grid_feature_group import (
     GridFeatureGroupPadToMatch,
     GridFeatureGroupPool,
     GridFeatureGroupToPoint,
+    MambaSkipBlock,
 )
 from physicsnemo.models.figconvnet.point_feature_conv import (
     PointFeatureTransform,
@@ -154,6 +155,8 @@ class FIGConvUNet(BaseModel):
         pooling_layers: List[int] = None,
         use_mamba: bool = False,
         mamba_cfg: Optional[dict] = None,
+        use_mamba_in_skip: bool = False,
+        mamba_skip_cfg: Optional[dict] = None,
     ):
         super().__init__(meta=MetaData())
         self.in_channels = in_channels
@@ -165,6 +168,7 @@ class FIGConvUNet(BaseModel):
         self.point_feature_to_grids = nn.ModuleList()
         self.aabb_length = torch.tensor(aabb_max) - torch.tensor(aabb_min)
         self.min_voxel_edge_length = torch.tensor([np.inf, np.inf, np.inf])
+        self.use_mamba_in_skip = use_mamba_in_skip
         for mem_fmt, res in resolution_memory_format_pairs:
             compressed_axis = memory_format_to_axis_index[mem_fmt]
             compressed_spatial_dims.append(res[compressed_axis])
@@ -197,6 +201,7 @@ class FIGConvUNet(BaseModel):
 
         self.down_blocks = nn.ModuleList()
         self.up_blocks = nn.ModuleList()
+        self.skip_connection_blocks = nn.ModuleList()
 
         if isinstance(num_down_blocks, int):
             num_down_blocks = [num_down_blocks] * (num_levels + 1)
@@ -231,6 +236,17 @@ class FIGConvUNet(BaseModel):
                 )
             down_block = nn.Sequential(*down_block)
             self.down_blocks.append(down_block)
+
+            if self.use_mamba_in_skip:
+                skip_block = MambaSkipBlock(
+                    dim=hidden_channels[level],
+                    compressed_spatial_dims=compressed_spatial_dims,
+                    mamba_cfg=mamba_skip_cfg,
+                )
+                self.skip_connection_blocks.append(skip_block)
+            else:
+                self.skip_connection_blocks.append(nn.Identity())
+
             # Add up blocks
             up_block = [
                 GridFeatureConv2DBlocksAndIntraCommunication(
@@ -356,6 +372,10 @@ class FIGConvUNet(BaseModel):
             up_grid_features = self.up_blocks[level](
                 down_grid_feature_groups[level + 1]
             )
+            if self.use_mamba_in_skip:
+               down_grid_feature_groups[level] = self.skip_connection_blocks[level](
+                    down_grid_feature_groups[level]
+                )
             padded_down_features = self.pad_to_match(
                 up_grid_features, down_grid_feature_groups[level]
             )

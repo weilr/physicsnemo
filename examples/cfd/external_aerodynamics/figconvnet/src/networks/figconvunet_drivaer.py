@@ -79,6 +79,8 @@ class FIGConvUNetDrivAerNet(FIGConvUNet):
         pooling_layers: List[int] = None,
         use_mamba: bool = False,
         mamba_cfg: Optional[Dict] = None,
+        use_mamba_in_skip: bool = False,
+        mamba_skip_cfg: Optional[dict] = None,
     ):
         super().__init__(
             in_channels=hidden_channels[0],
@@ -106,6 +108,8 @@ class FIGConvUNetDrivAerNet(FIGConvUNet):
             pooling_layers=pooling_layers,
             use_mamba=use_mamba,
             mamba_cfg=mamba_cfg,
+            use_mamba_in_skip=use_mamba_in_skip,
+            mamba_skip_cfg=mamba_skip_cfg,
         )
 
     def data_dict_to_input(self, data_dict) -> torch.Tensor:

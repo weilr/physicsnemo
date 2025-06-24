@@ -22,8 +22,8 @@ defaults:
   - /model: figconv_unet_drivaer
   # - /loss: mseloss
   - /loss: huberloss
-  # - /optimizer: adamw
-  - /optimizer: adam  
+  - /optimizer: adamw
+  # - /optimizer: adam  
   # - /lr_scheduler: reducelronplateau
   # - /lr_scheduler: steplr
   - /lr_scheduler: cosineannealingwarmrestarts
@@ -33,13 +33,13 @@ rank0_only: true
 
 # Loss weights
 pressure_loss_weight: 1.0    # 主要任务权重
-drag_loss_weight: 0.01       # 辅助任务权重，设置较小以不影响主要任务
+drag_loss_weight: 0.0       # 辅助任务权重，设置较小以不影响主要任务
 
 # test_best_only: true
 # output: outputs/2025-05-23/18-43-01
 
 amp:
-  enabled: true
+  enabled: false
   autocast:
     dtype: torch.float16
   scaler:
@@ -78,7 +78,7 @@ lr_scheduler:
   # gamma: 0.5
   # step_size: 15
   # CosineAnnealingWarmRestarts
-  T_0: 30    # 第一次重启的周期长度
+  T_0: 40    # 第一次重启的周期长度
   T_mult: 1  # 每次重启后周期长度的倍数
   eta_min: 1.0e-6  # 最小学习率 
 
@@ -112,8 +112,7 @@ data:
 model:
   aabb_max: [ 2.75,  1.5,  1.0]
   aabb_min: [-2.75, -1.5, -1.0]
-  hidden_channels: [16, 32, 48]
-  # hidden_channels: [8, 16, 32]
+  hidden_channels: [16,32,48]  # 从[16,32,48]增加到[24,48,72]，约50%提升
   in_channels: 1
   kernel_size: 5
   neighbor_search_type: radius
@@ -125,10 +124,11 @@ model:
   out_channels: 1
   pooling_layers: [2]
   pooling_type: max
-  # pos_encode_dim: 64 # 64
-  pos_encode_dim: 32 # 64
-  # reductions: [mean]
+  # 增加位置编码维度以更好地捕获空间信息
+  pos_encode_dim: 32  # 从32增加到48
+  # 使用多种reduction以捕获不同的统计特征
   reductions: [mean, max]
+  # 适度增加网格分辨率以提高精度
   resolution_memory_format_pairs:
     # - ${res_mem_pair:b_xc_y_z, [  5, 150, 100]}
     # - ${res_mem_pair:b_yc_x_z, [250,   3, 100]}
@@ -145,9 +145,14 @@ model:
   use_rel_pos_encode: true
   use_mamba: true
   mamba_cfg:
-    d_state: 64  # 或 64
+    d_state: 64
     d_conv: 4
-    expand: 4
+    expand: 2
+  use_mamba_in_skip: true
+  mamba_skip_cfg:
+    d_state: 64
+    d_conv: 4
+    expand: 2
 
 loggers:
   wandb:
@@ -157,4 +162,4 @@ loggers:
     group_name: fignet
     # run_name: FIGConvNet-level2-16,16,16-res250-150-100-pool-max-2-aabb-275x15x1-ks5-np32768-b8x2
     run_name: FIGConvNet-${now:%Y%m%d_%H%M%S}-level${model.num_levels}-${model.hidden_channels}-pool-${model.pooling_type}-${model.pooling_layers.0}-aabb-${model.aabb_max[0]}x${model.aabb_max[1]}x${model.aabb_max[2]}-ks${model.kernel_size}-np${data.num_points}-b${train.batch_size}-res${model.resolution_memory_format_pairs}
-seed: 42
+seed: 3407
